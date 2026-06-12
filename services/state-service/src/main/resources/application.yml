@@ -1,0 +1,37 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: state-service
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:5432/coredb
+    username: core
+    password: core
+  jpa:
+    hibernate:
+      ddl-auto: update      # local convenience; production uses Flyway migrations
+    open-in-view: false
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    consumer:
+      group-id: state-service
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: com.coresys.common.events
+        spring.json.value.default.type: com.coresys.common.events.TransactionEvent
+    listener:
+      ack-mode: MANUAL
+
+features:
+  async:
+    enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

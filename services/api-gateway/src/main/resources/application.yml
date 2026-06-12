@@ -1,0 +1,30 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      routes:
+        - id: ingestion-write
+          uri: http://localhost:8081
+          predicates:
+            - Path=/api/v1/transactions
+            - Method=POST
+        - id: state-read
+          uri: http://localhost:8083
+          predicates:
+            - Path=/api/v1/transactions/**
+            - Method=GET
+
+# Production seams (talking points, not wired locally):
+#  - RequestRateLimiter filter backed by Redis
+#  - JWT validation via spring-security-oauth2-resource-server
+#  - Per-route circuit breakers (Resilience4j)
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

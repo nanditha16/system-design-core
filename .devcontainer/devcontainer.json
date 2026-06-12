@@ -1,0 +1,25 @@
+{
+  "name": "system-design-core",
+  "image": "mcr.microsoft.com/devcontainers/java:17-bullseye",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/java:1": {
+      "version": "17",
+      "installMaven": true
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "vscjava.vscode-java-pack",
+        "vmware.vscode-spring-boot",
+        "ms-azuretools.vscode-docker",
+        "redhat.vscode-yaml",
+        "humao.rest-client"
+      ]
+    }
+  },
+  "forwardPorts": [8080, 8081, 8082, 8083, 8084, 9092, 6379, 5432],
+  "postCreateCommand": "mvn -q -DskipTests compile",
+  "postStartCommand": "docker compose -f infrastructure/docker-compose.yml up -d"
+}

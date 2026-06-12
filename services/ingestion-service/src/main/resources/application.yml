@@ -1,0 +1,37 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: ingestion-service
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: 6379
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      retries: 5
+      properties:
+        enable.idempotence: true          # idempotent producer: no broker-side dupes on retry
+        max.in.flight.requests.per.connection: 5
+
+# ---- STRUCTURAL FEATURE FLAGS (interview switchboard) ----
+features:
+  idempotency:
+    enabled: true        # false -> Redis removed from design (NoOpIdempotencyService)
+    ttl-hours: 24
+  async:
+    enabled: true        # false -> Kafka removed, sync REST to processing-service
+
+downstream:
+  processing-url: http://localhost:8082
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

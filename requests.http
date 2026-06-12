@@ -1,0 +1,28 @@
+### Submit a transaction (via gateway)
+POST http://localhost:8080/api/v1/transactions
+Content-Type: application/json
+Idempotency-Key: demo-key-001
+
+{
+  "accountId": "acct-42",
+  "amount": 250.00,
+  "currency": "USD",
+  "region": "US-EAST",
+  "type": "PAYMENT"
+}
+
+### Replay the same Idempotency-Key -> expect 409 DUPLICATE
+POST http://localhost:8080/api/v1/transactions
+Content-Type: application/json
+Idempotency-Key: demo-key-001
+
+{
+  "accountId": "acct-42",
+  "amount": 250.00,
+  "currency": "USD",
+  "region": "US-EAST",
+  "type": "PAYMENT"
+}
+
+### Query state (replace {id} with transactionId from the 202 response)
+GET http://localhost:8080/api/v1/transactions/{id}
