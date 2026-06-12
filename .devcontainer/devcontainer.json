@@ -1,7 +1,6 @@
 {
   "name": "system-design-core",
-  "image": "mcr.microsoft.com/devcontainers/java:17-bullseye",
-
+  "image": "mcr.microsoft.com/devcontainers/universal:2-linux",
   "customizations": {
     "vscode": {
       "extensions": [
@@ -12,8 +11,6 @@
       ]
     }
   },
-
   "forwardPorts": [8080, 8081, 8082, 8083, 8084],
-
-  "postCreateCommand": "echo 'Dev container ready'"
+  "postCreateCommand": "java -version && mvn -version"
 }
