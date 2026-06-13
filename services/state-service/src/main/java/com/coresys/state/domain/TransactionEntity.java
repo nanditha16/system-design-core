@@ -13,9 +13,10 @@ import java.time.Instant;
  */
 @Entity
 @Table(name = "transactions", uniqueConstraints = {
-        @UniqueConstraint(name = "uq_txn_id", columnNames = "transactionId"),
-        @UniqueConstraint(name = "uq_idem_key", columnNames = "idempotencyKey")
+        @UniqueConstraint(name = "uq_txn_id",  columnNames = "transaction_id"),
+        @UniqueConstraint(name = "uq_idem_key", columnNames = "idempotency_key")
 })
+
 public class TransactionEntity {
 
     @Id

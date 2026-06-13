@@ -1,6 +1,6 @@
 package com.coresys.state.api;
 
-import com.coresys.state.domain.Repositories;
+import com.coresys.state.domain.TransactionRepository;
 import com.coresys.state.domain.TransactionEntity;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -14,9 +14,10 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/v1/transactions")
 public class TransactionQueryController {
 
-    private final Repositories.TransactionRepository repository;
+    private final TransactionRepository repository;
+    
 
-    public TransactionQueryController(Repositories.TransactionRepository repository) {
+    public TransactionQueryController(TransactionRepository repository) {
         this.repository = repository;
     }
 

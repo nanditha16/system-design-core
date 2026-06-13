@@ -18,11 +18,11 @@ public class TransactionStateService {
 
     private static final Logger log = LoggerFactory.getLogger(TransactionStateService.class);
 
-    private final Repositories.TransactionRepository transactions;
-    private final Repositories.ProcessedEventRepository processedEvents;
+    private final TransactionRepository transactions;
+    private final ProcessedEventRepository processedEvents;
 
-    public TransactionStateService(Repositories.TransactionRepository transactions,
-                                   Repositories.ProcessedEventRepository processedEvents) {
+    public TransactionStateService(TransactionRepository transactions,
+                                   ProcessedEventRepository processedEvents) {
         this.transactions = transactions;
         this.processedEvents = processedEvents;
     }
