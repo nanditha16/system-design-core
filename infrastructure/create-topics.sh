@@ -5,6 +5,12 @@ set -euo pipefail
 
 BROKER=kafka:29092
 
+echo "Waiting for Kafka..."
+until docker exec kafka kafka-broker-api-versions --bootstrap-server "$BROKER" > /dev/null 2>&1; do
+  sleep 2
+done
+echo "Kafka ready."
+
 create() {
   docker exec kafka kafka-topics --bootstrap-server "$BROKER" \
     --create --if-not-exists --topic "$1" --partitions "$2" --replication-factor 1

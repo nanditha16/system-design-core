@@ -1,6 +1,4 @@
 # Local infra only. Services run via `mvn spring-boot:run` for fast iteration.
-version: "3.8"
-
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.3
