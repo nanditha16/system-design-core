@@ -21,5 +21,12 @@ create transactions.processed.v1       6
 create transactions.dlq.v1             3
 create reconciliation.discrepancies.v1 3
 
+# Brokerage topics
+create orders.incoming.v1     6
+create orders.processed.v1    6
+create orders.dlq.v1          3
+create orders.discrepancies.v1 3
+create orders.rejected.v1 3
+
 echo "Topics:"
 docker exec kafka kafka-topics --bootstrap-server "$BROKER" --list
