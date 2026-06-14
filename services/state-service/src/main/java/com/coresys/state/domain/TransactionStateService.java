@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.dao.DataIntegrityViolationException;
 
 /**
  * Single-writer state owner. One ACID transaction wraps:
@@ -35,18 +36,26 @@ public class TransactionStateService {
         }
         processedEvents.save(new ProcessedEventEntity(event.eventId()));
 
-        transactions.findByTransactionId(event.transactionId())
-                .ifPresentOrElse(
-                        existing -> existing.transitionTo(event.status()),
-                        () -> transactions.save(new TransactionEntity(
-                                event.transactionId(), event.idempotencyKey(), event.amount(),
-                                event.currency(), event.region(), event.type(), event.status())));
-
-        // Demo completion: SENT events settle to SUCCESS immediately.
-        // Real systems: settlement callback / downstream confirmation drives this.
-        if (event.status() == TransactionStatus.SENT) {
+        try {
             transactions.findByTransactionId(event.transactionId())
-                    .ifPresent(t -> t.transitionTo(TransactionStatus.SUCCESS));
+                    .ifPresentOrElse(
+                            existing -> existing.transitionTo(event.status()),
+                            () -> transactions.save(new TransactionEntity(
+                                    event.transactionId(), event.idempotencyKey(), event.amount(),
+                                    event.currency(), event.region(), event.type(), event.status())));
+
+            if (event.status() == TransactionStatus.SENT) {
+                transactions.findByTransactionId(event.transactionId())
+                        .ifPresent(t -> t.transitionTo(TransactionStatus.SUCCESS));
+            }
+        } catch (DataIntegrityViolationException e) {
+            // uq_idem_key or uq_txn_id fired: this business transaction was already
+            // persisted by a prior delivery. Safe to swallow — idempotency guaranteed.
+            log.warn("Idempotent skip for txn={} idem={}: {}",
+                    event.transactionId(), event.idempotencyKey(), e.getMessage());
+
         }
+
+        log.info("Applied event={} txn={} status={}", event.eventId(), event.transactionId(), event.status());
     }
 }
