@@ -4,13 +4,15 @@ server:
 spring:
   application:
     name: reconciliation-service
+  profiles:
+    active: banking
   datasource:
     url: jdbc:postgresql://${POSTGRES_HOST:localhost}:5432/coredb
     username: core
     password: core
   jpa:
     hibernate:
-      ddl-auto: none        # read-only over state-service's schema
+      ddl-auto: none
     open-in-view: false
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
@@ -20,6 +22,16 @@ spring:
       acks: all
       properties:
         enable.idempotence: true
+    consumer:
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: com.coresys.common.events.banking
+        spring.json.use.type.headers: true
+    listener:
+      ack-mode: MANUAL
 
 recon:
   interval-ms: 30000
@@ -27,6 +39,9 @@ recon:
   order:
     interval-ms: 30000
     sla-seconds: 60
+  banking:
+    interval-ms: 60000
+    sla-seconds: 120
 
 management:
   endpoints:

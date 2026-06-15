@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.context.annotation.Profile;
 
 import jakarta.persistence.EntityManager;
 import java.time.Duration;
@@ -21,6 +22,7 @@ import java.util.Map;
  * scans never contend with the hot write path in state-service."
  */
 @Component
+@Profile("brokerage")
 public class OrderReconciliationJob {
 
     private static final Logger log = LoggerFactory.getLogger(OrderReconciliationJob.class);

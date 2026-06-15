@@ -26,6 +26,16 @@ HTTP request
     State machine --> TransactionEntity
     Exactly-once approximation --> DB + Kafka ack
 
+NOTE: Processing:
+    - Using a single DOMAIN FLAG — controls which consumer activates at startup
+          profiles:
+            active: banking
+    - In a real system this would be an environment variable set per deployment,
+          - generic   -> TransactionConsumer  (transactions.incoming.v1)
+          - brokerage -> OrderConsumer        (orders.incoming.v1)
+          - banking   -> PaymentConsumer      (banking.payments.incoming.v1)
+        Same binary, different behavior, zero code change between environments.
+
 #############################################################################################################
 
 ### Operational Notes
@@ -334,6 +344,7 @@ Step 4 — Start ONE service  - STATE SERVICE - StateApplication
       - Step 4.1 - Start ONLY processing: - localhost:9092
         ```
         cd services/state-service
+        mvn -DskipTests install -rf :state-service
         mvn spring-boot:run
         ```
       - Step 4.2 - TEST:  Kafka → Consumer → StateService → DB (atomic write) → Query API
@@ -558,7 +569,7 @@ PHASE 2 - Reusable architecture template to apply it to a real business domain
                 Generic code stays at the existing level. New use case = new subpackage, zero changes to existing code.
             
 Examples:
-    1. 
+    1. Brokarage (Trading) System
     ```
     git checkout -b feature/brokerage-system
     # from repo root, on feature/brokerage-system branch
@@ -911,3 +922,254 @@ Examples:
               }
             ]
         ```
+
+#############################################################################################################
+
+Example 2: Banking Reconciliation System
+    - What reuses unchanged: 
+        Kafka wiring, Redis idempotency, offset-after-write, DLQ/retry, reconciliation scheduler pattern, devcontainer, docker-compose.
+    - What's new:
+        PaymentEntity with PENDING → SENT → CONFIRMED/FAILED state machine
+        payment-events topic fan-out to 3 consumer groups
+        Webhook handler (Core Banking callback)
+        LocalStack S3 in docker-compose for local) audit sink
+        EOD batch reconciliation (scheduled Spring Batch job that reads from DB + S3 and produces a discrepancy report)
+        mTLS config seam (documented, not fully wired — cert management is infra not app code)
+    - Structure: 
+        - Branch
+        ```
+            git checkout -b feature/banking-reconciliation
+            # from repo root, on feature/banking-reconciliation branch
+            
+            system-design-core/
+            ├── common/src/main/java/com/coresys/common/events/
+            │   └── banking/                                          ← NEW
+            │       ├── BankingTopics.java
+            │       ├── PaymentEvent.java
+            │       ├── PaymentRegion.java
+            │       ├── PaymentStatus.java
+            │       └── PaymentType.java
+            │
+            ├── services/
+            │   ├── ingestion-service/src/main/java/com/coresys/ingestion/
+            │   │   ├── banking/                                      ← NEW
+            │   │   │   ├── api/
+            │   │   │   │   ├── PaymentController.java
+            │   │   │   │   ├── PaymentRequest.java
+            │   │   │   │   └── PaymentResponse.java
+            │   │   │   └── webhook/
+            │   │   │       ├── WebhookController.java
+            │   │   │       └── WebhookRequest.java
+            │   │   └── feature/publish/
+            │   │       └── BankingEventPublisher.java                ← NEW
+            │   │
+            │   ├── processing-service/src/main/java/com/coresys/processing/
+            │   │   └── banking/                                      ← NEW
+            │   │       ├── consumer/
+            │   │       │   └── PaymentConsumer.java
+            │   │       ├── corebanking/
+            │   │       │   └── CoreBankingClient.java                (mTLS seam)
+            │   │       └── routing/
+            │   │           └── PaymentRouter.java
+            │   │
+            │   ├── state-service/src/main/java/com/coresys/state/
+            │   │   └── banking/                                      ← NEW
+            │   │       ├── api/
+            │   │       │   └── PaymentQueryController.java
+            │   │       ├── consumer/
+            │   │       │   ├── PaymentEventConsumer.java             (webhook results)
+            │   │       │   └── PaymentRoutedConsumer.java            (routing results)
+            │   │       ├── domain/
+            │   │       │   ├── PaymentEntity.java
+            │   │       │   └── PaymentRepository.java
+            │   │       └── service/
+            │   │           └── PaymentStateService.java
+            │   │
+            │   └── reconciliation-service/src/main/java/com/coresys/reconciliation/
+            │       └── banking/                                      ← NEW
+            │           ├── job/
+            │           │   └── EodReconciliationJob.java             (MISSING_IN_CORE + STUCK_PENDING)
+            │           └── sink/
+            │               └── AuditSinkConsumer.java                (S3/HDFS data lake sim)
+            │
+            └── infrastructure/
+                └── create-topics.sh                                  ← APPENDED (6 new banking topics)
+        ```
+        - Create topics and rebuild
+        ```
+            ./infrastructure/create-topics.sh
+                banking.payments.incoming.v1
+                banking.payments.routed.v1
+                banking.payment.events.v1      ← fan-out (3 consumer groups)
+                banking.payments.dlq.v1
+                banking.payments.retry.v1
+                banking.recon.discrepancies.v1
+
+            mvn -DskipTests install
+        ```
+        - Test the full flow
+            - processing-service: profile banking → only banking-router subscribed 
+            - state-service: profile banking → only banking-state-manager + banking-state-routed subscribed 
+            - reconciliation-service: profile banking → EodReconciliationJob + banking-audit-sink active 
+            - Data flow:
+                POST /banking/payments (ingestion:8081)
+                  → Redis SETNX (idempotency reserved)
+                  → banking.payments.incoming.v1 (Kafka)
+                    → processing-service: PaymentConsumer routed via CoreBankingClient
+                      → banking.payments.routed.v1
+                        → state-service: PaymentRoutedConsumer → DB write SENT 
+            
+                POST /banking/webhook/payment-result (ingestion:8081)
+                  → banking.payment.events.v1 (Kafka)
+                    → state-service: PaymentEventConsumer → DB transition SENT→CONFIRMED 
+                      → coreBankingRef: "FEDWIRE-001" persisted 
+         ```
+            # Submit a WIRE payment
+            PAYMENT_ID=$(curl -s -X POST localhost:8081/api/v1/banking/payments \
+              -H "Content-Type: application/json" \
+              -H "Idempotency-Key: wire-002" \
+              -d '{"userId":"user-42","amount":5000,"currency":"USD","type":"WIRE","region":"US"}' | jq -r '.paymentId')
+
+            echo "Payment ID: $PAYMENT_ID"
+            Payment ID: 04c16d44-d92d-4681-b112-ddd37b3d7c25
+            
+            # Wait 3s, Check state  (should be SENT)
+            sleep 3 && curl -s localhost:8083/api/v1/banking/payments/$PAYMENT_ID | jq .
+            {
+              "id": 2,
+              "paymentId": "04c16d44-d92d-4681-b112-ddd37b3d7c25",
+              "idempotencyKey": "wire-002",
+              "userId": "user-42",
+              "amount": 5000,
+              "currency": "USD",
+              "type": "WIRE",
+              "region": "US",
+              "status": "SENT",
+              "coreBankingRef": null,
+              "createdAt": "2026-06-15T15:54:01.562335Z",
+              "updatedAt": "2026-06-15T15:54:01.562336Z"
+            }
+
+            # Simulate core banking webhook (SUCCESS)
+            curl -s -X POST localhost:8081/api/v1/banking/webhook/payment-result \
+              -H "Content-Type: application/json" \
+              -d "{\"paymentId\":\"$PAYMENT_ID\",\"coreBankingRef\":\"FEDWIRE-001\",\"result\":\"SUCCESS\",\"reason\":\"\"}" | jq .
+
+            # Verify CONFIRMED
+            sleep 2 && curl -s localhost:8083/api/v1/banking/payments/$PAYMENT_ID | jq .
+            {
+              "id": 2,
+              "paymentId": "04c16d44-d92d-4681-b112-ddd37b3d7c25",
+              "idempotencyKey": "wire-002",
+              "userId": "user-42",
+              "amount": 5000,
+              "currency": "USD",
+              "type": "WIRE",
+              "region": "US",
+              "status": "CONFIRMED",
+              "coreBankingRef": "FEDWIRE-001",
+              "createdAt": "2026-06-15T15:54:01.562335Z",
+              "updatedAt": "2026-06-15T15:54:05.056173Z"
+            }
+        
+            # Check payment stats
+            curl -s localhost:8083/api/v1/banking/payments/stats | jq .
+            {
+              "failed": 0,
+              "confirmed": 1,
+              "sent": 1,
+              "pending": 0
+            }
+
+            # Check audit files
+            find /tmp/audit-lake -type f | head -10
+            /tmp/audit-lake/year=2026/month=06/day=15/event_type=PENDING/0312dc15-c996-4394-9c47-6f90d325a4e5.json
+            /tmp/audit-lake/year=2026/month=06/day=15/event_type=PENDING/53491a3e-1006-45c1-8aba-59da9362f169.json
+
+            cat /tmp/audit-lake/year=2026/month=06/day=15/event_type=PENDING/*.json | head -1 | jq .
+            {
+              "eventId": "0312dc15-c996-4394-9c47-6f90d325a4e5",
+              "paymentId": "71bec89f-5911-4c47-afa2-74c604b731e4",
+              "userId": "user-42",
+              "amount": "100",
+              "currency": "USD",
+              "type": "ACH",
+              "region": "US",
+              "status": "PENDING",
+              "coreBankingRef": "",
+              "occurredAt": "2026-06-15T16:12:20.518077255Z"
+            }
+            {
+              "eventId": "53491a3e-1006-45c1-8aba-59da9362f169",
+              "paymentId": "6d4b05f1-2199-425b-b0f9-e4ae38572713",
+              "userId": "user-42",
+              "amount": "200",
+              "currency": "USD",
+              "type": "ACH",
+              "region": "US",
+              "status": "PENDING",
+              "coreBankingRef": "",
+              "occurredAt": "2026-06-15T16:13:10.906444470Z"
+            }
+            
+            # Consume discrepancy events
+            docker exec kafka kafka-console-consumer \
+              --bootstrap-server kafka:29092 \
+              --topic banking.recon.discrepancies.v1 \
+              --from-beginning --max-messages 5
+            "{\"type\":\"MISSING_IN_CORE\",\"paymentId\":\"dc34e2c5-20cf-4d92-b237-677a4bc9a248\",\"userId\":\"user-42\",\"amount\":\"100.0000\",\"currency\":\"USD\",\"paymentType\":\"ACH\",\"region\":\"US\",\"stuckSince\":\"2026-06-15T16:04:35.154837Z\",\"detectedAt\":\"2026-06-15T16:07:14.177807745Z\"}"
+            "{\"type\":\"MISSING_IN_CORE\",\"paymentId\":\"dc34e2c5-20cf-4d92-b237-677a4bc9a248\",\"userId\":\"user-42\",\"amount\":\"100.0000\",\"currency\":\"USD\",\"paymentType\":\"ACH\",\"region\":\"US\",\"stuckSince\":\"2026-06-15T16:04:35.154837Z\",\"detectedAt\":\"2026-06-15T16:08:14.182858077Z\"}"
+            "{\"type\":\"MISSING_IN_CORE\",\"paymentId\":\"dc34e2c5-20cf-4d92-b237-677a4bc9a248\",\"userId\":\"user-42\",\"amount\":\"100.0000\",\"currency\":\"USD\",\"paymentType\":\"ACH\",\"region\":\"US\",\"stuckSince\":\"2026-06-15T16:04:35.154837Z\",\"detectedAt\":\"2026-06-15T16:09:14.187792059Z\"}"
+            "{\"type\":\"MISSING_IN_CORE\",\"paymentId\":\"dc34e2c5-20cf-4d92-b237-677a4bc9a248\",\"userId\":\"user-42\",\"amount\":\"100.0000\",\"currency\":\"USD\",\"paymentType\":\"ACH\",\"region\":\"US\",\"stuckSince\":\"2026-06-15T16:04:35.154837Z\",\"detectedAt\":\"2026-06-15T16:10:14.194509982Z\"}"
+            "{\"type\":\"MISSING_IN_CORE\",\"paymentId\":\"dc34e2c5-20cf-4d92-b237-677a4bc9a248\",\"userId\":\"user-42\",\"amount\":\"100.0000\",\"currency\":\"USD\",\"paymentType\":\"ACH\",\"region\":\"US\",\"stuckSince\":\"2026-06-15T16:04:35.154837Z\",\"detectedAt\":\"2026-06-15T16:11:48.382337570Z\"}"
+            Processed a total of 5 messages
+
+            # Idempotency proof (replay wire-001 → 409)
+            curl -s -X POST localhost:8081/api/v1/banking/payments \
+              -H "Content-Type: application/json" \
+              -H "Idempotency-Key: wire-001" \
+              -d '{"userId":"user-42","amount":5000,"currency":"USD","type":"WIRE","region":"US"}' | jq .
+            {
+              "paymentId": null,
+              "status": "DUPLICATE",
+              "message": "Idempotency-Key already processed"
+            }  
+              
+            # Payement History:
+            curl -s localhost:8083/api/v1/banking/payments/user/user-42 | jq '[.[] | {paymentId, type, status, coreBankingRef}]'
+            [
+              {
+                "paymentId": "04c16d44-d92d-4681-b112-ddd37b3d7c25",
+                "type": "WIRE",
+                "status": "CONFIRMED",
+                "coreBankingRef": "FEDWIRE-001"
+              },
+              {
+                "paymentId": "c263d433-0755-445f-9ae7-4e83c5029818",
+                "type": "WIRE",
+                "status": "SENT",
+                "coreBankingRef": null
+              }
+            ]
+  
+            # EOD reconciliation proof 
+            # Submit a payment and DON'T send webhook (leaves it stuck in SENT)
+            STUCK_ID=$(curl -s -X POST localhost:8081/api/v1/banking/payments \
+              -H "Content-Type: application/json" \
+              -H "Idempotency-Key: wire-stuck-002" \
+              -d '{"userId":"user-42","amount":999,"currency":"USD","type":"WIRE","region":"US"}' | jq -r '.paymentId')
+            echo "Stuck payment: $STUCK_ID"
+            
+            Stuck payment: 117af706-497c-4bdb-9e51-83c4468445a4
+            
+            # Wait 2 minutes (SLA = 120s), then check recon topic
+            docker exec kafka kafka-console-consumer \
+              --bootstrap-server kafka:29092 \
+              --topic banking.recon.discrepancies.v1 \
+              --from-beginning --max-messages 5
+            "{\"type\":\"MISSING_IN_CORE\",\"paymentId\":\"c263d433-0755-445f-9ae7-4e83c5029818\",\"userId\":\"user-42\",\"amount\":\"5000.0000\",\"currency\":\"USD\",\"paymentType\":\"WIRE\",\"region\":\"US\",\"stuckSince\":\"2026-06-15T15:53:00.922731Z\",\"detectedAt\":\"2026-06-15T15:55:14.017816322Z\"}"
+        "{\"type\":\"MISSING_IN_CORE\",\"paymentId\":\"c263d433-0755-445f-9ae7-4e83c5029818\",\"userId\":\"user-42\",\"amount\":\"5000.0000\",\"currency\":\"USD\",\"paymentType\":\"WIRE\",\"region\":\"US\",\"stuckSince\":\"2026-06-15T15:53:00.922731Z\",\"detectedAt\":\"2026-06-15T15:56:14.091349140Z\"}"
+        "{\"type\":\"MISSING_IN_CORE\",\"paymentId\":\"c263d433-0755-445f-9ae7-4e83c5029818\",\"userId\":\"user-42\",\"amount\":\"5000.0000\",\"currency\":\"USD\",\"paymentType\":\"WIRE\",\"region\":\"US\",\"stuckSince\":\"2026-06-15T15:53:00.922731Z\",\"detectedAt\":\"2026-06-15T15:57:14.111760965Z\"}"
+        "{\"type\":\"MISSING_IN_CORE\",\"paymentId\":\"c263d433-0755-445f-9ae7-4e83c5029818\",\"userId\":\"user-42\",\"amount\":\"5000.0000\",\"currency\":\"USD\",\"paymentType\":\"WIRE\",\"region\":\"US\",\"stuckSince\":\"2026-06-15T15:53:00.922731Z\",\"detectedAt\":\"2026-06-15T15:58:14.119873493Z\"}"
+        "{\"type\":\"MISSING_IN_CORE\",\"paymentId\":\"c263d433-0755-445f-9ae7-4e83c5029818\",\"userId\":\"user-42\",\"amount\":\"5000.0000\",\"currency\":\"USD\",\"paymentType\":\"WIRE\",\"region\":\"US\",\"stuckSince\":\"2026-06-15T15:53:00.922731Z\",\"detectedAt\":\"2026-
+         ```       

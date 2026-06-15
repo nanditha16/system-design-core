@@ -9,6 +9,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.Acknowledgment;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 /**
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Component;
  * Failures -> DefaultErrorHandler -> exponential backoff retries -> DLQ.
  */
 @Component
+@Profile("generic")
 @ConditionalOnProperty(name = "features.async.enabled", havingValue = "true", matchIfMissing = true)
 public class TransactionConsumer {
 
