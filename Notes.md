@@ -26,6 +26,16 @@ HTTP request
     State machine --> TransactionEntity
     Exactly-once approximation --> DB + Kafka ack
 
+NOTE: Processing:
+    - Using a single DOMAIN FLAG — controls which consumer activates at startup
+          profiles:
+            active: banking
+    - In a real system this would be an environment variable set per deployment,
+          - generic   -> TransactionConsumer  (transactions.incoming.v1)
+          - brokerage -> OrderConsumer        (orders.incoming.v1)
+          - banking   -> PaymentConsumer      (banking.payments.incoming.v1)
+        Same binary, different behavior, zero code change between environments.
+
 #############################################################################################################
 
 ### Operational Notes
@@ -334,6 +344,7 @@ Step 4 — Start ONE service  - STATE SERVICE - StateApplication
       - Step 4.1 - Start ONLY processing: - localhost:9092
         ```
         cd services/state-service
+        mvn -DskipTests install -rf :state-service
         mvn spring-boot:run
         ```
       - Step 4.2 - TEST:  Kafka → Consumer → StateService → DB (atomic write) → Query API
@@ -558,7 +569,7 @@ PHASE 2 - Reusable architecture template to apply it to a real business domain
                 Generic code stays at the existing level. New use case = new subpackage, zero changes to existing code.
             
 Examples:
-    1. 
+    1. Brokarage (Trading) System
     ```
     git checkout -b feature/brokerage-system
     # from repo root, on feature/brokerage-system branch
@@ -1162,4 +1173,3 @@ Example 2: Banking Reconciliation System
         "{\"type\":\"MISSING_IN_CORE\",\"paymentId\":\"c263d433-0755-445f-9ae7-4e83c5029818\",\"userId\":\"user-42\",\"amount\":\"5000.0000\",\"currency\":\"USD\",\"paymentType\":\"WIRE\",\"region\":\"US\",\"stuckSince\":\"2026-06-15T15:53:00.922731Z\",\"detectedAt\":\"2026-06-15T15:58:14.119873493Z\"}"
         "{\"type\":\"MISSING_IN_CORE\",\"paymentId\":\"c263d433-0755-445f-9ae7-4e83c5029818\",\"userId\":\"user-42\",\"amount\":\"5000.0000\",\"currency\":\"USD\",\"paymentType\":\"WIRE\",\"region\":\"US\",\"stuckSince\":\"2026-06-15T15:53:00.922731Z\",\"detectedAt\":\"2026-
          ```       
- 
