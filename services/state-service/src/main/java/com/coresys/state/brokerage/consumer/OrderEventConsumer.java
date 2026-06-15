@@ -8,12 +8,16 @@ import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
+import org.springframework.context.annotation.Profile;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 /**
  * CRITICAL ORDERING: DB commit FIRST, offset commit SECOND.
  * Crash between the two -> redelivery -> processedEvents dedup absorbs it.
  */
 @Component
+@Profile("brokerage")
+@ConditionalOnProperty(name = "features.async.enabled", havingValue = "true", matchIfMissing = true)
 public class OrderEventConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(OrderEventConsumer.class);

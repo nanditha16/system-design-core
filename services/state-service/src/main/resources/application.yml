@@ -4,13 +4,15 @@ server:
 spring:
   application:
     name: state-service
+  profiles:
+    active: banking
   datasource:
     url: jdbc:postgresql://${POSTGRES_HOST:localhost}:5432/coredb
     username: core
     password: core
   jpa:
     hibernate:
-      ddl-auto: update      # local convenience; production uses Flyway migrations
+      ddl-auto: update
     open-in-view: false
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
@@ -21,8 +23,8 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
-        spring.json.trusted.packages: com.coresys.common.events
-        spring.json.value.default.type: com.coresys.common.events.TransactionEvent
+        spring.json.trusted.packages: com.coresys.common.events,com.coresys.common.events.brokerage,com.coresys.common.events.banking
+        spring.json.use.type.headers: true
     listener:
       ack-mode: MANUAL
 

@@ -4,6 +4,12 @@ server:
 spring:
   application:
     name: processing-service
+  # DOMAIN FLAG — controls which consumer activates at startup
+  # generic   -> TransactionConsumer  (transactions.incoming.v1)
+  # brokerage -> OrderConsumer        (orders.incoming.v1)
+  # banking   -> PaymentConsumer      (banking.payments.incoming.v1)
+  profiles:
+    active: banking
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
     producer:
@@ -15,12 +21,12 @@ spring:
     consumer:
       group-id: processing-service
       auto-offset-reset: earliest
-      enable-auto-commit: false           # manual ack -> commit AFTER downstream publish
+      enable-auto-commit: false
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
-        spring.json.trusted.packages: com.coresys.common.events
-        spring.json.value.default.type: com.coresys.common.events.TransactionEvent
+        spring.json.trusted.packages: com.coresys.common.events,com.coresys.common.events.brokerage,com.coresys.common.events.banking
+        spring.json.use.type.headers: true
     listener:
       ack-mode: MANUAL
 

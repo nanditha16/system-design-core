@@ -16,17 +16,25 @@ create() {
     --create --if-not-exists --topic "$1" --partitions "$2" --replication-factor 1
 }
 
-create transactions.incoming.v1        6
-create transactions.processed.v1       6
-create transactions.dlq.v1             3
-create reconciliation.discrepancies.v1 3
+# create transactions.incoming.v1        6
+# create transactions.processed.v1       6
+# create transactions.dlq.v1             3
+# create reconciliation.discrepancies.v1 3
 
 # Brokerage topics
-create orders.incoming.v1     6
-create orders.processed.v1    6
-create orders.dlq.v1          3
-create orders.discrepancies.v1 3
-create orders.rejected.v1 3
+# create orders.incoming.v1     6docker compose -f infrastructure/docker-compose.yml up -d
+# create orders.processed.v1    6
+# create orders.dlq.v1          3
+# create orders.discrepancies.v1 3
+# create orders.rejected.v1 3
+
+# Banking reconciliation topics
+create banking.payments.incoming.v1   6
+create banking.payments.routed.v1     6
+create banking.payment.events.v1      6
+create banking.payments.dlq.v1        3
+create banking.payments.retry.v1      3
+create banking.recon.discrepancies.v1 3
 
 echo "Topics:"
 docker exec kafka kafka-topics --bootstrap-server "$BROKER" --list
