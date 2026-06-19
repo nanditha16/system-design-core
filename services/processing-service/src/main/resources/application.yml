@@ -8,8 +8,10 @@ spring:
   # generic   -> TransactionConsumer  (transactions.incoming.v1)
   # brokerage -> OrderConsumer        (orders.incoming.v1)
   # banking   -> PaymentConsumer      (banking.payments.incoming.v1)
+  # instagram -> PostFanoutConsumer     (instagram.posts.incoming.v1)
+  #           -> FollowEventConsumer    (instagram.follow.events.v1)
   profiles:
-    active: banking
+    active: instagram
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
     producer:
@@ -25,10 +27,20 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
-        spring.json.trusted.packages: com.coresys.common.events,com.coresys.common.events.brokerage,com.coresys.common.events.banking
+        spring.json.trusted.packages: >
+          com.coresys.common.events,
+          com.coresys.common.events.brokerage,
+          com.coresys.common.events.banking,
+          com.coresys.common.events.instagram
         spring.json.use.type.headers: true
     listener:
       ack-mode: MANUAL
+
+downstream:
+  state-url: http://localhost:8083
+
+instagram:
+  mega-influencer-threshold: 1000000
 
 features:
   async:

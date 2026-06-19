@@ -1173,3 +1173,292 @@ Example 2: Banking Reconciliation System
         "{\"type\":\"MISSING_IN_CORE\",\"paymentId\":\"c263d433-0755-445f-9ae7-4e83c5029818\",\"userId\":\"user-42\",\"amount\":\"5000.0000\",\"currency\":\"USD\",\"paymentType\":\"WIRE\",\"region\":\"US\",\"stuckSince\":\"2026-06-15T15:53:00.922731Z\",\"detectedAt\":\"2026-06-15T15:58:14.119873493Z\"}"
         "{\"type\":\"MISSING_IN_CORE\",\"paymentId\":\"c263d433-0755-445f-9ae7-4e83c5029818\",\"userId\":\"user-42\",\"amount\":\"5000.0000\",\"currency\":\"USD\",\"paymentType\":\"WIRE\",\"region\":\"US\",\"stuckSince\":\"2026-06-15T15:53:00.922731Z\",\"detectedAt\":\"2026-
          ```       
+
+#############################################################################################################
+
+Example 3: Instagram MVP
+    - What reuses unchanged: 
+        Kafka wiring, Redis (timeline cache fits perfectly), idempotency, DLQ/retry, @Profile switching, docker-compose.
+    - What's new:
+        Common Events:InstagramTopics, PostEvent, FeedUpdateEvent, FollowEvent, MediaType, FanoutStrategy
+        ingestion: + requests/responses
+            api/ → PostController, FollowController, CreatePostRequest, FollowRequest, PostResponse
+            publish/ → InstagramEventPublisher
+        processing:
+            consumer/ → PostFanoutConsumer, FollowEventConsumer (fan-out on write)
+            routing/ → FanoutRouter (skip mega-influencers → fan-out on read)  (strategy decision)
+        state: 
+            domain/ → PostEntity, PostRepository, UserFollowEntity, UserFollowRepository, 
+            service/ → TimelineCacheService, PostStateService, FollowStateService
+            consumer/ → PostStateConsumer, FeedUpdateConsumer, 
+            api/ → FeedController, PostQueryController, UserController
+        reconciliation: 
+            job/ → FeedConsistencyJob (detect stale feeds)
+    - Fan-out strategy decision (FanoutRouter):
+        PostEvent arrives → fetch live follower count from state-service
+          count < threshold (default 1M) → FanoutStrategy.WRITE
+            → PostStateService loops all followers → one Redis ZADD per follower
+            → O(N) write cost, O(1) read cost
+          count >= threshold → FanoutStrategy.READ
+            → skip Redis fan-out entirely
+            → FeedController merges this author's posts in at read time via DB query
+            → O(1) write cost, O(K) read cost (K = number of mega-influencer followees, typically small)
+    - intentional divergence from MVP Solution design
+        - MongoDB → PostgreSQL. 
+            - The repo has one shared Postgres instance across all four domains (generic, brokerage, banking, instagram) via spring.profiles.active. 
+            - Adding MongoDB means a second database technology, a second connection pool, a second docker-compose service, and breaks the "zero structural changes between domains" design goal. 
+            - PostEntity/UserFollowEntity are relational tables in the same coredb schema as everything else. 
+            - The trade-off you lose: MongoDB's schema flexibility for post metadata. Operational simplicity for a demo repo, not a claim that Postgres is better for this workload at 100M DAU. The original NoSQL rationale (avoid joins, fast unstructured writes) still holds for a real implementation.
+            - What you keep: ACID transactions for the post-write + idempotency-dedup combo, which the repo's pattern depends on everywhere.
+        - S3 → simulated via s3Key string. 
+            - No real object storage in this environment. 
+            - CreatePostRequest.s3Key and PostEntity.cdnUrl are just string fields — the upload flow (client → pre-signed URL → S3) is documented in comments but not implemented, since there's no AWS account wired into Codespaces. 
+            - This mirrors how the banking domain simulated the data lake with local filesystem paths instead of real S3.
+        - Graph DB → Postgres adjacency table. 
+            - UserFollowEntity is a plain (follower_id, followee_id) table with a unique constraint, not a graph database. 
+            - The code comments call this out explicitly: "for massive graphs, this moves to a dedicated Graph DB or sharded service... here we keep it in Postgres for local demo simplicity." 
+            - Query patterns (findByFolloweeId, findFolloweeIdsByFollowerId) are the same access patterns a graph traversal would serve, just expressed as SQL joins instead.
+    - NOTES:
+        - Redis timeline cache (ZSET, exactly as specified), fan-out on write vs. fan-out on read for mega-influencers, Kafka event bus, CDN URL rewrite seam, idempotency keys.
+    - Structure: 
+        - flags:
+            features.fanout=write → Redis timeline updated on post (default, <1M followers)
+            features.fanout=read → mega-influencer path, feed assembled at read time
+            features.cdn=true → S3 URL → CloudFront URL rewrite seam
+    - Branch
+            ```
+            git checkout -b feature/instagram-feed
+        
+            instagram-changes/
+            │
+            ├── infrastructure/
+            │   └── create-topics.sh                          ← MODIFIED (added 6 instagram topics)
+            │
+            ├── common/src/main/java/com/coresys/common/events/instagram/
+            │   ├── InstagramTopics.java                       ← NEW
+            │   ├── PostEvent.java                             ← NEW
+            │   ├── FeedUpdateEvent.java                       ← NEW
+            │   ├── FollowEvent.java                           ← NEW
+            │   ├── FanoutStrategy.java                        ← NEW (WRITE vs READ enum)
+            │   └── MediaType.java                             ← NEW
+            │
+            ├── services/ingestion-service/
+            │   ├── src/main/resources/application.yml         ← MODIFIED (profile=instagram)
+            │   └── src/main/java/.../ingestion/instagram/
+            │       ├── api/
+            │       │   ├── PostController.java                ← NEW
+            │       │   ├── FollowController.java              ← NEW
+            │       │   ├── CreatePostRequest.java             ← NEW
+            │       │   ├── FollowRequest.java                 ← NEW
+            │       │   └── PostResponse.java                  ← NEW
+            │       └── publish/
+            │           └── InstagramEventPublisher.java       ← NEW
+            │
+            ├── services/processing-service/
+            │   ├── src/main/resources/application.yml         ← MODIFIED (profile=instagram + downstream url)
+            │   └── src/main/java/.../processing/instagram/
+            │       ├── routing/
+            │       │   └── FanoutRouter.java                  ← NEW (WRITE vs READ decision)
+            │       └── consumer/
+            │           ├── PostFanoutConsumer.java             ← NEW
+            │           └── FollowEventConsumer.java            ← NEW
+            │
+            ├── services/state-service/
+            │   ├── src/main/resources/application.yml         ← MODIFIED (profile=instagram + Redis config)
+            │   └── src/main/java/.../state/instagram/
+            │       ├── domain/
+            │       │   ├── PostEntity.java                    ← NEW
+            │       │   ├── PostRepository.java                ← NEW
+            │       │   ├── UserFollowEntity.java              ← NEW
+            │       │   └── UserFollowRepository.java          ← NEW
+            │       ├── service/
+            │       │   ├── TimelineCacheService.java          ← NEW (Redis ZSET operations)
+            │       │   ├── PostStateService.java              ← NEW (DB write + fan-out)
+            │       │   └── FollowStateService.java            ← NEW (social graph + backfill)
+            │       ├── consumer/
+            │       │   ├── PostStateConsumer.java             ← NEW
+            │       │   └── FollowStateConsumer.java           ← NEW
+            │       └── api/
+            │           ├── FeedController.java                ← NEW (hybrid feed assembly)
+            │           ├── PostQueryController.java           ← NEW
+            │           └── UserController.java                ← NEW (follower-count endpoint)
+            │
+            └── services/reconciliation-service/
+                ├── src/main/resources/application.yml         ← MODIFIED (profile=instagram)
+                └── src/main/java/.../reconciliation/instagram/
+                    └── job/
+                        └── FeedConsistencyJob.java            ← NEW (detects fan-out gaps)
+        ```
+        - Create topics and rebuild
+        ```
+            docker compose -f infrastructure/docker-compose.yml up -d
+            ./infrastructure/create-topics.sh
+            docker exec kafka kafka-topics --bootstrap-server kafka:29092 --list
+                instagram.dlq.v1
+                instagram.feed.updates.v1
+                instagram.follow.events.v1
+                instagram.posts.fanout.v1
+                instagram.posts.incoming.v1
+                instagram.recon.v1
+
+            mvn -DskipTests install
+        ```
+        - Start each service in separate terminals
+        ```
+            mvn -pl services/ingestion-service spring-boot:run
+            mvn -pl services/processing-service spring-boot:run
+            mvn -pl services/state-service spring-boot:run
+            mvn -pl services/reconciliation-service spring-boot:run
+        ```
+        - Test the full flow
+            #  follow → post → fan-out → feed read
+            ## 1. User A follows User B
+            ```
+            curl -X POST localhost:8081/api/v1/instagram/follow \
+              -H "Content-Type: application/json" \
+              -d '{"followerId":"user-A","followeeId":"user-B"}'
+            Response:  
+                followed
+            ```
+            ## 2. User B creates a post
+            ```
+            POST_ID=$(curl -s -X POST localhost:8081/api/v1/instagram/posts \
+              -H "Content-Type: application/json" \
+              -H "Idempotency-Key: post-001" \
+              -d '{"authorId":"user-B","caption":"Hello Instagram!","s3Key":"s3://bucket/posts/img1.jpg","mediaType":"PHOTO"}' | jq -r '.postId')
+            Response:
+            ```
+            ## 3. User A reads feed (should see User B's post)
+            ```
+            sleep 3 && curl -s localhost:8083/api/v1/instagram/feed/user-A | jq .
+            Response:
+                [
+                  {
+                    "postId": "484e6ca5-3d13-449c-bdc2-f67571370e37",
+                    "authorId": "user-B",
+                    "cdnUrl": "https://cdn.example.com/posts/484e6ca5-3d13-449c-bdc2-f67571370e37/img1.jpg",
+                    "mediaType": "PHOTO",
+                    "caption": "Hello Instagram!",
+                    "postedAt": "2026-06-19T16:14:16.847164709Z"
+                  }
+                ]
+            ```
+            # Idempotency proof — replay post-001, expect DUPLICATE
+            ```
+            curl -s -X POST localhost:8081/api/v1/instagram/posts \
+              -H "Content-Type: application/json" \
+              -H "Idempotency-Key: post-001" \
+              -d '{"authorId":"user-B","caption":"Hello Instagram!","s3Key":"s3://bucket/posts/img1.jpg","mediaType":"PHOTO"}' | jq .
+            Response:
+                {
+                  "postId": null,
+                  "status": "DUPLICATE",
+                  "message": "Post already submitted"
+                }
+            ```
+            # Post query by postId
+            ```        
+            curl -s localhost:8083/api/v1/instagram/posts/$POST_ID | jq .
+            Response:
+                {
+                  "id": 1,
+                  "postId": "484e6ca5-3d13-449c-bdc2-f67571370e37",
+                  "authorId": "user-B",
+                  "caption": "Hello Instagram!",
+                  "s3Key": "s3://bucket/posts/img1.jpg",
+                  "cdnUrl": "https://cdn.example.com/posts/484e6ca5-3d13-449c-bdc2-f67571370e37/img1.jpg",
+                  "mediaType": "PHOTO",
+                  "fanoutStrategy": "WRITE",
+                  "followerCount": 1,
+                  "createdAt": "2026-06-19T16:14:17.273429Z"
+                }            
+            ```
+            # User's post history
+            ```
+            curl -s localhost:8083/api/v1/instagram/posts/user/user-B | jq .
+            Response: 
+                [
+                  {
+                    "id": 1,
+                    "postId": "484e6ca5-3d13-449c-bdc2-f67571370e37",
+                    "authorId": "user-B",
+                    "caption": "Hello Instagram!",
+                    "s3Key": "s3://bucket/posts/img1.jpg",
+                    "cdnUrl": "https://cdn.example.com/posts/484e6ca5-3d13-449c-bdc2-f67571370e37/img1.jpg",
+                    "mediaType": "PHOTO",
+                    "fanoutStrategy": "WRITE",
+                    "followerCount": 1,
+                    "createdAt": "2026-06-19T16:14:17.273429Z"
+                  }
+                ]          
+            ```
+            # Follower count + user stats
+            ```
+            curl -s localhost:8083/api/v1/instagram/users/user-B/follower-count
+            curl -s localhost:8083/api/v1/instagram/users/user-B/stats | jq .
+            Response:
+                {
+                  "timelineSize": 0,
+                  "followingCount": 0,
+                  "followersCount": 1
+                }
+            ```
+            # Backfill on new follow — User C follows User B, should immediately see B's existing posts
+            ```
+            curl -s -X POST localhost:8081/api/v1/instagram/follow \
+              -H "Content-Type: application/json" \
+              -d '{"followerId":"user-C","followeeId":"user-B"}'
+
+            sleep 3
+            curl -s localhost:8083/api/v1/instagram/feed/user-C | jq .
+            Response:
+                [
+                  {
+                    "postId": "484e6ca5-3d13-449c-bdc2-f67571370e37",
+                    "authorId": "user-B",
+                    "cdnUrl": "https://cdn.example.com/posts/484e6ca5-3d13-449c-bdc2-f67571370e37/img1.jpg",
+                    "mediaType": "PHOTO",
+                    "caption": "Hello Instagram!",
+                    "postedAt": "2026-06-19T16:14:17.273429Z"
+                  }
+                ]
+            ```
+            # Unfollow — verify edge removal
+            ```
+            curl -X DELETE localhost:8081/api/v1/instagram/follow \
+              -H "Content-Type: application/json" \
+              -d '{"followerId":"user-A","followeeId":"user-B"}'
+
+            sleep 2
+            curl -s localhost:8083/api/v1/instagram/users/user-B/follower-count; echo "<<<END"
+            Response:
+                unfollowed
+            curl -s localhost:8083/api/v1/instagram/users/user-B/stats | jq .
+            {
+              "timelineSize": 0,
+              "followingCount": 0,
+              "followersCount": 1
+            }
+            ```
+            # Mega-influencer fan-out-on-read path (the interesting one)
+            ```
+                # Stop processing-service, edit application.yml:
+                # instagram.mega-influencer-threshold: 2   (instead of 1000000)
+                # Restart, then have user-B post again (B has 1 follower = user-C, still below 2)
+                # Add 2 more followers to push over threshold, then post
+            ```
+            # Reconciliation — feed consistency job clean run
+            ```
+                # Watch reconciliation-service logs for next scheduled tick (every 120s)
+                # Expect: "Feed Consistency CLEAN: N posts verified, no gaps"
+            ```
+            # Confirm user-C's timeline still has the backfilled post
+            ```
+            curl -s localhost:8083/api/v1/instagram/users/user-C/stats | jq .
+            Response:
+                {
+                  "timelineSize": 1,
+                  "followingCount": 1,
+                  "followersCount": 0
+                }
+            ```

@@ -4,6 +4,8 @@ server:
 spring:
   application:
     name: ingestion-service
+  profiles:
+    active: instagram
   data:
     redis:
       host: ${REDIS_HOST:localhost}

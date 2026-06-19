@@ -5,7 +5,7 @@ spring:
   application:
     name: reconciliation-service
   profiles:
-    active: banking
+    active: instagram
   datasource:
     url: jdbc:postgresql://${POSTGRES_HOST:localhost}:5432/coredb
     username: core
@@ -42,7 +42,9 @@ recon:
   banking:
     interval-ms: 60000
     sla-seconds: 120
-
+  instagram:
+    window-minutes: 5
+    interval-ms: 120000
 management:
   endpoints:
     web:

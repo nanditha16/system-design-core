@@ -5,7 +5,7 @@ spring:
   application:
     name: state-service
   profiles:
-    active: banking
+    active: instagram
   datasource:
     url: jdbc:postgresql://${POSTGRES_HOST:localhost}:5432/coredb
     username: core
@@ -14,6 +14,10 @@ spring:
     hibernate:
       ddl-auto: update
     open-in-view: false
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: 6379
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
     consumer:
@@ -23,10 +27,19 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
-        spring.json.trusted.packages: com.coresys.common.events,com.coresys.common.events.brokerage,com.coresys.common.events.banking
+        spring.json.trusted.packages: >
+          com.coresys.common.events,
+          com.coresys.common.events.brokerage,
+          com.coresys.common.events.banking,
+          com.coresys.common.events.instagram
         spring.json.use.type.headers: true
     listener:
       ack-mode: MANUAL
+
+instagram:
+  mega-influencer-threshold: 1000000
+  timeline:
+    max-size: 800
 
 features:
   async:
