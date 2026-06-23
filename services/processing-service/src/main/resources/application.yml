@@ -4,14 +4,16 @@ server:
 spring:
   application:
     name: processing-service
-  # DOMAIN FLAG — controls which consumer activates at startup
-  # generic   -> TransactionConsumer  (transactions.incoming.v1)
-  # brokerage -> OrderConsumer        (orders.incoming.v1)
-  # banking   -> PaymentConsumer      (banking.payments.incoming.v1)
-  # instagram -> PostFanoutConsumer     (instagram.posts.incoming.v1)
-  #           -> FollowEventConsumer    (instagram.follow.events.v1)
+  # DOMAIN FLAG — controls which consumers activate at startup
+  # generic   -> TransactionConsumer      (transactions.incoming.v1)
+  # brokerage -> OrderConsumer            (orders.incoming.v1)
+  # banking   -> PaymentConsumer          (banking.payments.incoming.v1)
+  # instagram -> PostFanoutConsumer       (instagram.posts.incoming.v1)
+  #           -> FollowEventConsumer      (instagram.follow.events.v1)
+  # ebay      -> ListingEnrichmentConsumer (ebay.listings.incoming.v1)
+  #           -> InventoryEventForwarder   (ebay.inventory.events.v1)
   profiles:
-    active: instagram
+    active: ebay
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
     producer:
@@ -31,7 +33,8 @@ spring:
           com.coresys.common.events,
           com.coresys.common.events.brokerage,
           com.coresys.common.events.banking,
-          com.coresys.common.events.instagram
+          com.coresys.common.events.instagram,
+          com.coresys.common.events.ebay
         spring.json.use.type.headers: true
     listener:
       ack-mode: MANUAL
