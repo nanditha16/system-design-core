@@ -1,0 +1,39 @@
+type Mutation {
+    onboardSeller(input: SellerInput!): String
+    createListing(input: CreateListingInput!, idempotencyKey: String!): String
+    adjustInventory(input: InventoryAdjustmentInput!): String
+}
+
+type Query {
+    ping: String
+}
+
+input SellerInput {
+    businessName: String!
+    email: String!
+    countryCode: String!
+}
+
+input CreateListingInput {
+    sellerId: ID!
+    productId: String!
+    price: Float!
+    currency: String!
+    region: String!
+    initialQty: Int!
+}
+
+input InventoryAdjustmentInput {
+    listingId: ID!
+    eventType: InventoryEventType!
+    quantity: Int!
+    orderId: String
+}
+
+enum InventoryEventType {
+    ADD
+    REMOVE
+    RESERVE
+    RELEASE
+    SELL
+}

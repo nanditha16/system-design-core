@@ -5,7 +5,7 @@ spring:
   application:
     name: state-service
   profiles:
-    active: instagram
+    active: ebay
   datasource:
     url: jdbc:postgresql://${POSTGRES_HOST:localhost}:5432/coredb
     username: core
@@ -18,6 +18,8 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: 6379
+      repositories:
+        enabled: false    # StringRedisTemplate only — no Redis repositories in ebay service
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
     consumer:
@@ -31,7 +33,8 @@ spring:
           com.coresys.common.events,
           com.coresys.common.events.brokerage,
           com.coresys.common.events.banking,
-          com.coresys.common.events.instagram
+          com.coresys.common.events.instagram,
+          com.coresys.common.events.ebay
         spring.json.use.type.headers: true
     listener:
       ack-mode: MANUAL
